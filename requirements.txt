@@ -1,0 +1,7 @@
+faster-whisper>=1.2
+av<16          # faster-whisper 1.2 breaks on PyAV 16+
+sounddevice
+soundfile
+numpy
+rich
+rumps          # menu bar status

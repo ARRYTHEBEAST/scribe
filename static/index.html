@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scribe</title>
+<style>
+  :root {
+    --bg: #f7f6f3; --panel: #ffffff; --text: #1f2328; --muted: #6b7280;
+    --line: #e5e3de; --accent: #c2410c; --accent-soft: #fde7da; --ok: #15803d; --mark: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141414; --panel: #1d1d1d; --text: #e8e6e3; --muted: #9a9a9a;
+      --line: #2e2e2e; --accent: #f97316; --accent-soft: #3a2416; --ok: #4ade80; --mark: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .setup { display: grid; gap: 10px; margin-bottom: 14px; }
+  label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  input, textarea { width: 100%; font: inherit; color: var(--text); background: var(--bg);
+                    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  textarea { resize: vertical; min-height: 38px; }
+  .controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  button { font: inherit; font-weight: 600; border: 1px solid var(--line); background: var(--panel);
+           color: var(--text); border-radius: 999px; padding: 9px 18px; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  #rec { background: var(--accent); border-color: var(--accent); color: #fff; min-width: 150px; }
+  #rec.on { background: var(--panel); color: var(--accent); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: currentColor;
+         margin-right: 8px; vertical-align: 1px; }
+  #rec.on .dot { animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+  #timer { font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 600; min-width: 96px; }
+  .meter { flex: 1; min-width: 120px; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .meter > div { height: 100%; width: 0; background: var(--ok); transition: width .1s linear; }
+  #status { font-size: 13px; color: var(--muted); margin-top: 10px; min-height: 20px; }
+  #transcript { margin-top: 14px; height: 52vh; overflow-y: auto; scroll-behavior: smooth; }
+  #transcript:empty::before { content: "The live transcript will appear here, a few seconds behind the speaker."; color: var(--muted); }
+  .para { margin: 0 0 12px; }
+  .ts { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .markline { margin: 0 0 12px; padding: 6px 10px; border-left: 3px solid var(--mark);
+              background: var(--accent-soft); border-radius: 4px; font-size: 14px; }
+  .markline .ts { color: var(--mark); }
+  h2 { font-size: 15px; margin: 28px 0 10px; }
+  #sessions { list-style: none; padding: 0; margin: 0; }
+  #sessions li { display: flex; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #sessions .t { font-weight: 600; flex: 1; min-width: 160px; }
+  #sessions a { color: var(--accent); font-size: 13px; }
+  .hint { color: var(--muted); font-size: 12px; }
+  kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Scribe</h1><span class="sub">Records the full lecture and transcribes it live, on this Mac.</span></header>
+
+  <div class="panel">
+    <div class="setup">
+      <div><label for="title">Lecture title</label><input id="title" placeholder="e.g. PHYS 201 – Week 5: Rotational dynamics"></div>
+      <div><label for="vocab">Key terms (optional, improves spelling)</label>
+        <textarea id="vocab" rows="1" placeholder="e.g. angular momentum, moment of inertia, torque, Noether"></textarea></div>
+    </div>
+    <div class="controls">
+      <button id="rec"><span class="dot"></span><span id="recLabel">Start recording</span></button>
+      <span id="timer">00:00:00</span>
+      <div class="meter" title="Microphone level"><div id="level"></div></div>
+      <button id="pauseBtn" disabled>Pause</button>
+      <button id="markBtn" disabled title="Flag this moment (M)">Mark moment</button>
+    </div>
+    <div id="status"></div>
+    <div id="transcript"></div>
+    <div class="hint">Press <kbd>M</kbd> to mark a moment (“this is on the exam”), <kbd>Shift</kbd>+<kbd>M</kbd> to add a note with it.</div>
+  </div>
+
+  <h2>Past lectures</h2>
+  <ul id="sessions"></ul>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = "idle";
+const fmt = (s) => { s = Math.floor(s); return [s / 3600, s % 3600 / 60, s % 60].map(v => String(Math.floor(v)).padStart(2, "0")).join(":"); };
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function nearBottom() { const t = $("transcript"); return t.scrollHeight - t.scrollTop - t.clientHeight < 80; }
+function append(el) { const stick = nearBottom(); $("transcript").appendChild(el); if (stick) $("transcript").scrollTop = 1e9; }
+function addPara(p) {
+  const d = document.createElement("p"); d.className = "para";
+  const ts = document.createElement("span"); ts.className = "ts"; ts.textContent = fmt(p.start);
+  d.append(ts, document.createTextNode(p.text)); append(d);
+}
+function addMark(m) {
+  const d = document.createElement("div"); d.className = "markline";
+  const ts = document.createElement("span"); ts.className = "ts"; ts.textContent = "★ " + fmt(m.t);
+  d.append(ts, document.createTextNode(m.note || "Marked")); append(d);
+}
+
+function setState(s, info) {
+  state = s;
+  const on = s === "recording", active = on || s === "paused";
+  $("rec").classList.toggle("on", active);
+  $("rec").disabled = s === "finishing";
+  $("recLabel").textContent = active ? "Stop" : s === "finishing" ? "Saving…" : "Start recording";
+  $("markBtn").disabled = !on;
+  $("pauseBtn").disabled = !active;
+  $("pauseBtn").textContent = s === "paused" ? "Resume" : "Pause";
+  $("title").disabled = $("vocab").disabled = active || s === "finishing";
+  if (s === "paused") { $("status").textContent = "Paused — the mic is off and nothing is being recorded."; $("level").style.width = "0"; }
+  if (on) $("status").textContent = "Recording — audio is saved continuously, so nothing is lost if the transcript lags.";
+  if (s === "finishing") $("status").textContent = "Transcribing the last few seconds and saving…";
+  if (s === "saved") { $("status").textContent = "Saved to sessions/" + (info || ""); $("level").style.width = "0"; loadSessions(); }
+}
+
+$("rec").onclick = async () => {
+  try {
+    if (state === "recording" || state === "paused") return await post("/stop");
+    $("transcript").innerHTML = ""; $("timer").textContent = "00:00:00";
+    await post("/start", { title: $("title").value, vocab: $("vocab").value });
+    setState("recording");
+  } catch (e) { $("status").textContent = "⚠ " + e.message; }
+};
+
+async function mark(withNote) {
+  if (state !== "recording") return;
+  const note = withNote ? (prompt("Note for this moment:") || "") : "";
+  try { await post("/mark", { note }); } catch (e) { $("status").textContent = "⚠ " + e.message; }
+}
+$("markBtn").onclick = () => mark(false);
+$("pauseBtn").onclick = async () => {
+  try { await post(state === "paused" ? "/resume" : "/pause"); } catch (e) { $("status").textContent = "⚠ " + e.message; }
+};
+document.addEventListener("keydown", (e) => {
+  if (e.target.matches("input, textarea") || e.metaKey || e.ctrlKey) return;
+  if (e.key.toLowerCase() === "m") { e.preventDefault(); mark(e.shiftKey); }
+});
+
+const es = new EventSource("/events");
+es.onmessage = (msg) => {
+  const ev = JSON.parse(msg.data);
+  if (ev.type === "level") {
+    $("timer").textContent = fmt(ev.elapsed);
+    $("level").style.width = Math.min(100, Math.sqrt(ev.rms) * 250) + "%";
+    if (state === "recording" && ev.lag > 45) $("status").textContent = `Transcript is ${Math.round(ev.lag)}s behind — audio is still being saved. Consider --model base.en.`;
+  } else if (ev.type === "para") addPara(ev);
+  else if (ev.type === "mark") addMark(ev);
+  else if (ev.type === "status") setState(ev.state, ev.dir);
+};
+
+async function loadSessions() {
+  const list = await (await fetch("/sessions")).json();
+  const ul = $("sessions"); ul.innerHTML = "";
+  if (!list.length) { ul.innerHTML = '<li class="hint">No recordings yet.</li>'; return; }
+  for (const s of list) {
+    const li = document.createElement("li");
+    const t = document.createElement("span"); t.className = "t"; t.textContent = s.title;
+    const d = document.createElement("span"); d.className = "hint"; d.textContent = s.duration ? fmt(s.duration) : "in progress";
+    li.append(t, d);
+    const links = [["Live transcript", "transcript.md"], ["Audio", "audio.flac"]];
+    if (s.final) links.unshift(["Final transcript", "transcript_final.md"]);
+    for (const [label, file] of links) {
+      const a = document.createElement("a"); a.href = `/files/${encodeURIComponent(s.dir)}/${file}`; a.target = "_blank"; a.textContent = label; li.append(a);
+    }
+    ul.append(li);
+  }
+}
+
+(async () => {
+  const s = await (await fetch("/state")).json();
+  if (s.state !== "idle") {
+    s.paras.forEach(addPara); s.marks.forEach(addMark);
+    $("timer").textContent = fmt(s.elapsed); $("title").value = s.title;
+    setState(s.state, s.dir);
+  }
+  loadSessions();
+})();
+</script>
+</body>
+</html>
